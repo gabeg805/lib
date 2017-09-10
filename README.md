@@ -8,10 +8,15 @@ Library of utilities for a variety of languages.
 
 This will vary from project to project.
 
-For a Bash script, you would source the utility script by executing:
+### Bash
+
+For a Bash script, you would source the script to gain access to the
+functions. Using the utility script as an example:
 ```
 . /path/to/library/bash/util.sh
 ```
+
+### C
 
 For a C program, you would need to *#include* the library header file in your
 program's source file. Using the *io* library as an example:
