@@ -28,11 +28,11 @@ Then, depending on your compilation process, if you output object files first,
 you would need to add the directory where the library header file exists in the
 *gcc* command line. For instance:
 ```
-$ gcc -g -Wall -I</path/to/library/c>
+$ gcc -g -Wall -I</path/to/library/c> -o <object-file.o> -c <source-file.c>
 ```
 
 Finally, when you compile your program, add the library source file to the
 command line.
 ```
-$ gcc -g -Wall -o <program> <object-files.o> </path/to/library/c/io/io.c>
+$ gcc -g -Wall -o <program> <object-file(s).o> </path/to/library/c/io/io.c>
 ```
