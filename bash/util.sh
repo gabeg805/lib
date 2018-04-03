@@ -22,10 +22,69 @@
 # ------------------------------------------------------------------------------
 
 # Exit statuses
+PROJECT=
 ENORM=0
 EGETOPT=1
 EARG=2
 EARGS=2
+
+CLISHORTOPTS=()
+CLILONGOPTS=()
+CLIDESC=()
+
+CLIKEYS=()
+CLIARGS=()
+CLIARGTYPES=()
+
+##
+#
+#
+cli_options()
+{
+    for o in "${@}"
+    do
+        echo "${o}"
+    done
+    return 0
+}
+
+##
+#
+#
+cli_parse()
+{
+    PROJECT="${0##*/}"
+    # for a in "${@}"
+    # do
+    #     echo "${a}"
+    # done
+
+    return 0
+}
+
+##
+#
+#
+parse_options()
+{
+    local program="${1}"
+    local short="${2}"
+    local long="${3}"
+    shift 3
+    if [ $# -eq 0 ]
+    then
+        usage
+        exit ${ENORM}
+    fi
+
+    local args=$(getopt -o "${short}" --long "${long}" --name "${PROGRAM}" -- "${@}")
+    if [ $? -ne 0 ]
+    then
+        usage
+        exit ${EGETOPT}
+    fi
+    eval set -- "${args}"
+}
 
 # ------------------------------------------------------------------------------
 # Print information
