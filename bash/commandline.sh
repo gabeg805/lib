@@ -40,6 +40,7 @@ CLI_OPT_DESC=()
 ##
 # Command line interface argument types
 #
+CLI_INVALID_ARGUMENT=-1
 CLI_NO_ARGUMENT=0
 CLI_REQUIRED_ARGUMENT=1
 CLI_OPTIONAL_ARGUMENT=2
@@ -77,101 +78,94 @@ cli_init()
 cli_parse()
 {
     PROJECT="${0##*/}"
-    local hasarg=false
     local opt=
     local arg=
     local index=
-    local type=
+    local type=${CLI_INVALID_ARGUMENT}
 
     while [ -n "${1}" ]
     do
+        index=$(cli_find_option_index "${1}")
+
+        if cli_is_list_argument ${type}
+        then
+            if [ -z "${index}" ]
+            then
+                if [ -z "${arg}" ]
+                then
+                    arg="${1}"
+                else
+                    arg+="|${1}"
+                fi
+                shift
+                continue
+            else
+                :
+            fi
+        fi
+
+        if [ -z "${index}" ]
+        then
+            echo "${PROJECT}: Invalid option '${item}'."
+            exit ${EARG}
+        fi
+
         local item="${1}"
         echo "Item: '${item}'"
 
-        index=$(cli_find_option_index "${item}")
-
-        if ${hasarg}
-        then
-            if [ -z "${index}" ]
-            then
-                arg="${item}"
-                if cli_is_required_argument ${type} \
-                        || cli_is_optional_argument ${type}
-                then
-                    hasarg=false
-                    type=
-                elif cli_is_list_argument ${type}
-                then
-                    continue
-                else
-                    echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
-                    exit 1
-                fi
-            else
-                if cli_is_optional_argument ${type}
-                then
-                    hasarg=false
-                    type=
-                else
-                    echo "${PROJECT}: Argument missing for option ${opt}, type ${type}." 1>&2
-                    exit 1
-                fi
-            fi
-        else
-            if [ -z "${index}" ]
-            then
-                echo "${PROJECT}: Invalid option '${item}'."
-                exit ${EARG}
-            fi
-        fi
-
         type=$(cli_get_arg_type_index ${index})
+        echo "Type: ${type}"
+
         if cli_is_no_argument ${type}
         then
+            echo No argument
             opt="${item}"
             arg=""
-        else
-            opt="${item}"
-            arg=""
-            hasarg=true
-        fi
-
-        if ${hasarg}
+            shift
+        elif cli_is_required_argument ${type} \
+                || cli_is_optional_argument ${type}
         then
-            continue
-        fi
+            echo Required or optional
 
-        if cli_is_long_opt "${item}"
-        then
-            cli_parse_help_opt "${item}"
             opt="${item%%=*}"
-            arg="${item##*=}"
-        elif cli_is_short_opt "${item}"
-        then
-            echo "Short opt!"
-            hasarg=false
-            opt="${item}"
-            arg=""
-            if cli_has_arg "${opt}"
+
+            if cli_is_long_opt_index "${item}" "${index}"
             then
-                echo "Has arg!"
-                hasarg=true
-                continue
+                arg="${item##*=}"
+                if [ "${opt}" == "${arg}" ]
+                then
+                    if cli_is_required_argument ${type}
+                    then
+                        echo "${PROJECT}: Option '${opt}' must be supplied an argument." 1>&2
+                        exit 2
+                    fi
+                    arg=
+                    shift
+                fi
+            else
+                shift
+                if [ -n "$(cli_find_option_index "${1}")" ]
+                then
+                    if cli_is_required_argument ${type}
+                    then
+                        echo "${PROJECT}: Option '${opt}' must be supplied an argument." 1>&2
+                        exit 2
+                    fi
+                    arg=
+                else
+                    arg="${1}"
+                fi
             fi
         else
-            if ! ${hasarg}
-            then
-                echo "${PROJECT}: Invalid option '${item}'." 1>&2
-                exit ${EARG}
-            else
-                arg="${item}"
-            fi
+            echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
+            exit 1
         fi
 
-        echo "Through!"
-
+        echo Adding stuff
         cli_add_key "${opt}"
         cli_add_value "${arg}"
+        opt=
+        arg=
     done
 
     return 0
@@ -246,7 +240,7 @@ cli_test()
     local key=
     local val=
     local i=
-    for i in $(cli_get_index_list)
+    for i in $(cli_get_index_list_from_input)
     do
         key=$(cli_get_key_index ${i})
         val=$(cli_get_val_index ${i})
@@ -499,12 +493,40 @@ cli_get_n_opt()
 }
 
 ##
+# Return the number of options were input by the user into this program.
+#
+cli_get_n_input()
+{
+    echo ${#CLIKEYS[@]}
+}
+
+##
 # Return a list of sequential indicies, ending in the last possible index in the
-# list of options. This is meant to be used to loop over all option information
-# items.
+# list of options.
+# 
+# This is meant to be used to loop over all option information items.
+#
 cli_get_index_list()
 {
     local n=$(cli_get_n_opt)
+    if [ ${n} -eq 0 ]
+    then
+        return 1
+    else
+        seq 0 $[ ${n} - 1 ]
+    fi
+    return 0
+}
+
+##
+# Return a list of sequential indicies, ending in the last possible index in the
+# list of input supplied by the user.
+# 
+# This is meant to be used to loop over all option information items.
+#
+cli_get_index_list_from_input()
+{
+    local n=$(cli_get_n_input)
     if [ ${n} -eq 0 ]
     then
         return 1
@@ -599,7 +621,7 @@ cli_is_short_opt()
 {
     local opt="${1}"
     local index=$(cli_find_option_index "${opt}")
-    return $(cli_is_short_opt_index "${index}")
+    return $(cli_is_short_opt_index "${opt}" "${index}")
 }
 
 ##
@@ -607,7 +629,8 @@ cli_is_short_opt()
 #
 cli_is_short_opt_index()
 {
-    local index="${1}"
+    local opt="${1}"
+    local index="${2}"
     if [ -z "${index}" ]
     then
         return 1
@@ -627,7 +650,7 @@ cli_is_long_opt()
 {
     local opt="${1}"
     local index=$(cli_find_option_index "${opt}")
-    return $(cli_is_long_opt_index "${index}")
+    return $(cli_is_long_opt_index "${opt}" "${index}")
 }
 
 ##
@@ -635,7 +658,8 @@ cli_is_long_opt()
 #
 cli_is_long_opt_index()
 {
-    local index="${1}"
+    local opt="${1}"
+    local index="${2}"
     if [ -z "${index}" ]
     then
         return 1
