@@ -93,7 +93,7 @@ cli_parse()
         index=$(cli_find_option_index "${input}")
         if cli_parse_list_argument "${arg}" "${index}" "${type}"
         then
-            arg+="${input}|"
+            arg="$(cli_add_list_argument "${arg}" "${input}")"
             shift
             if [ -z "${1}" ]
             then
@@ -144,14 +144,7 @@ cli_parse()
         elif cli_is_list_argument ${type}
         then
             shift
-            input="${1}"
-            if [ -z "${input}" ] \
-                   || [ -n "${input}" \
-                           -a -n "$(cli_find_option_index "${input}")" ]
-            then
-                echo "${PROJECT}: List argument needs at least one argument." 1>&2
-                exit 3
-            fi
+            cli_check_first_list_argument "${1}"
             continue
         else
             echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
@@ -194,6 +187,25 @@ cli_parse_list_argument()
         fi
     fi
     return 1
+}
+
+##
+# When a list argument type is encountered, check to make sure there are
+# arguments present after it.
+##
+cli_check_first_list_argument()
+{
+    local input="${1}"
+    local index=
+    if [ -n "${input}" ]
+    then
+        index="$(cli_find_option_index "${input}")"
+    fi
+    if [ -z "${input}" ] || [ -n "${input}" -a -n "${index}" ]
+    then
+        echo "${PROJECT}: List argument needs at least one argument." 1>&2
+        exit 3
+    fi
 }
 
 ##
@@ -394,6 +406,22 @@ cli_add_value()
 }
 
 ##
+# Add an argument to the string containing the current list of arguments, for a
+# list argument type.
+##
+cli_add_list_argument()
+{
+    local arg="${1}"
+    local input="${2}"
+    if [ -z "${arg}" ]
+    then
+        echo "${input}"
+    else
+        echo "${arg}|${input}"
+    fi
+}
+
+##
 # Create an option usage line
 ##
 cli_new_usage_line()
@@ -507,9 +535,19 @@ cli_opt_index_to_key()
 ##
 cli_trim_dash()
 {
-    echo "${1}" | sed -re 's/^[-][-]?//'
+    local trim="${1}"
+    if [ "${trim:0:2}" == "--" ]
+    then
+        trim="${trim:2}"
+    elif [ "${trim:0:1}" == "-" ]
+    then
+         trim="${trim:1}"
+    else
+        :
+    fi
+    echo "${trim}"
 }
- 
+
 ##
 # Return the short option at the given index.
 # 
