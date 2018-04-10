@@ -21,56 +21,62 @@
 # 
 # ------------------------------------------------------------------------------
 
-# Exit statuses
+##
+# Project name.
+##
 PROJECT=
-ENORM=0
-EGETOPT=1
-EARG=2
-EARGS=2
 
 ##
-# Command line interface option information
+# Command line interface option information.
 ##
-CLI_OPT_SHORT=()
-CLI_OPT_LONG=()
-CLI_OPT_ARG=()
-CLI_OPT_ARG_TYPE=()
-CLI_OPT_DESC=()
+CLI_OPTION_SHORT=()
+CLI_OPTION_LONG=()
+CLI_OPTION_ARGNAME=()
+CLI_OPTION_ARGTYPE=()
+CLI_OPTION_DESC=()
 
 ##
-# Command line interface argument types
+# Command line interface options and arguments that a user has input into the
+# current running program.
 ##
-CLI_INVALID_ARGUMENT=-1
-CLI_NO_ARGUMENT=0
-CLI_REQUIRED_ARGUMENT=1
-CLI_OPTIONAL_ARGUMENT=2
-CLI_LIST_ARGUMENT=3
+CLI_INPUT_OPTION=()
+CLI_INPUT_ARGUMENT=()
 
 ##
-# Command line interface table. Composed of key-value pairs.
+# Command line interface argument types.
 ##
-CLI_TABLE_KEYS=()
-CLI_TABLE_VALUES=()
+CLI_ARGUMENT_TYPE_INVALID=-1
+CLI_ARGUMENT_TYPE_NONE=0
+CLI_ARGUMENT_TYPE_REQUIRED=1
+CLI_ARGUMENT_TYPE_OPTIONAL=2
+CLI_ARGUMENT_TYPE_LIST=3
 
 ##
-# Initialize the command line interface parser by storing all available options
-# for the program.
+# Define all the command line options and how they should be used.
+# 
+# When adding a long option, there will be a check for what the argument name
+# and type are, if there is one.
 ##
-cli_init()
+cli_options()
 {
     for line in "${@}"
     do
         local IFS=$'|'
         local options=(${line})
-        cli_add_short_opt "${options[0]}"
-        cli_add_long_opt "${options[1]}"
-        if [ ${#options[@]} -eq 3 ]
+        local short="${options[0]}"
+        local long="${options[1]}"
+        local description="${options[2]}"
+        local argument=
+
+        cli_option_add_short "${short}"
+        if cli_option_has_argument "${long}"
         then
-            cli_add_arg ""
-        else
-            cli_add_arg "${options[2]}"
+            argument="$(cli_option_get_argument_field "${long}")"
+            long="$(cli_option_get_option_field "${long}")"
+            cli_option_add_argument "${argument}"
         fi
-        cli_add_desc "${options[-1]}"
+        cli_option_add_long "${long}"
+        cli_option_add_description "${description}"
     done
     return 0
 }
@@ -85,7 +91,7 @@ cli_parse()
     local opt=
     local arg=
     local index=
-    local type=${CLI_INVALID_ARGUMENT}
+    local type=${CLI_ARGUMENT_TYPE_INVALID}
 
     while [ -n "${1}" ]
     do
@@ -323,50 +329,6 @@ cli_test()
 }
 
 ##
-# Add a short option to the list of valid short options.
-##
-cli_add_short_opt()
-{
-    CLI_OPT_SHORT+=("${1// /}")
-}
-
-##
-# Add a long option to the list of valid long options.
-##
-cli_add_long_opt()
-{
-    CLI_OPT_LONG+=("${1// /}")
-}
-
-##
-# Add an argument name and type to the list of all argument names, as well as
-# the list of all argument types.
-##
-cli_add_arg()
-{
-    local arg="${1// /}"
-    local type=
-    local count=$(echo "${arg}" | tr -c -d ':' | wc -c)
-    case ${count} in
-        0) type=${CLI_NO_ARGUMENT} ;;
-        1) type=${CLI_REQUIRED_ARGUMENT} ;;
-        2) type=${CLI_OPTIONAL_ARGUMENT} ;;
-        3) type=${CLI_LIST_ARGUMENT} ;;
-        *) echo "Error adding arg '${arg}'." 1>&2; exit ;;
-    esac
-    CLI_OPT_ARG+=("${arg//:/}")
-    CLI_OPT_ARG_TYPE+=("${type}")
-}
-
-##
-# Add a description to the list of descriptions.
-##
-cli_add_desc()
-{
-    CLI_OPT_DESC+=("${1}")
-}
-
-##
 # Add a key-value pair to the command line interface table.
 ##
 cli_add_to_table()
@@ -375,8 +337,8 @@ cli_add_to_table()
     local value="${2}"
     local opt=$(cli_get_long_opt_index ${index})
     local key=$(cli_opt_index_to_key ${index})
-    CLI_TABLE_KEYS+=("${key}")
-    CLI_TABLE_VALUES+=("${value}")
+    CLI_INPUT_OPTION+=("${key}")
+    CLI_INPUT_ARGUMENT+=("${value}")
 }
 
 ##
@@ -555,7 +517,7 @@ cli_trim_dash()
 ##
 cli_get_short_opt_index()
 {
-    echo "${CLI_OPT_SHORT[${1}]}"
+    echo "${CLI_OPTION_SHORT[${1}]}"
 }
 
 ##
@@ -565,7 +527,7 @@ cli_get_short_opt_index()
 ##
 cli_get_long_opt_index()
 {
-    echo "${CLI_OPT_LONG[${1}]}"
+    echo "${CLI_OPTION_LONG[${1}]}"
 }
 
 ##
@@ -575,7 +537,7 @@ cli_get_long_opt_index()
 ##
 cli_get_arg_type_index()
 {
-    echo "${CLI_OPT_ARG_TYPE[${1}]}"
+    echo "${CLI_OPTION_ARGTYPE[${1}]}"
 }
 
 ##
@@ -585,7 +547,7 @@ cli_get_arg_type_index()
 ##
 cli_get_arg_name_index()
 {
-    echo "${CLI_OPT_ARG[${1}]}"
+    echo "${CLI_OPTION_ARGNAME[${1}]}"
 }
 
 ##
@@ -595,7 +557,7 @@ cli_get_arg_name_index()
 ##
 cli_get_desc_index()
 {
-    echo "${CLI_OPT_DESC[${1}]}"
+    echo "${CLI_OPTION_DESC[${1}]}"
 }
 
 ##
@@ -605,7 +567,7 @@ cli_get_desc_index()
 ##
 cli_get_key_index()
 {
-    echo "${CLI_TABLE_KEYS[${1}]}"
+    echo "${CLI_INPUT_OPTION[${1}]}"
 }
 
 ##
@@ -615,7 +577,7 @@ cli_get_key_index()
 ##
 cli_get_val_index()
 {
-    echo "${CLI_TABLE_VALUES[${1}]}"
+    echo "${CLI_INPUT_ARGUMENT[${1}]}"
 }
 
 ##
@@ -623,7 +585,7 @@ cli_get_val_index()
 ##
 cli_get_n_opt()
 {
-    echo ${#CLI_OPT_DESC[@]}
+    echo ${#CLI_OPTION_DESC[@]}
 }
 
 ##
@@ -632,7 +594,7 @@ cli_get_n_opt()
 ##
 cli_get_n_table_entries()
 {
-    echo ${#CLI_TABLE_KEYS[@]}
+    echo ${#CLI_INPUT_OPTION[@]}
 }
 
 ##
@@ -685,7 +647,7 @@ cli_has_arg()
 ##
 cli_is_no_argument()
 {
-    if [ "${1}" -eq ${CLI_NO_ARGUMENT} ]
+    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_NONE} ]
     then
         return 0
     else
@@ -698,7 +660,7 @@ cli_is_no_argument()
 ##
 cli_is_required_argument()
 {
-    if [ "${1}" -eq ${CLI_REQUIRED_ARGUMENT} ]
+    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_REQUIRED} ]
     then
         return 0
     else
@@ -711,7 +673,7 @@ cli_is_required_argument()
 ##
 cli_is_optional_argument()
 {
-    if [ "${1}" -eq ${CLI_OPTIONAL_ARGUMENT} ]
+    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_OPTIONAL} ]
     then
         return 0
     else
@@ -724,7 +686,7 @@ cli_is_optional_argument()
 ##
 cli_is_list_argument()
 {
-    if [ "${1}" -eq ${CLI_LIST_ARGUMENT} ]
+    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_LIST} ]
     then
         return 0
     else
@@ -811,3 +773,127 @@ cli_is_long_opt_index()
     return 0
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+##
+# Add a short option to the list of valid short options.
+##
+cli_option_add_short()
+{
+    CLI_OPTION_SHORT+=("${1// /}")
+}
+
+##
+# Add a long option to the list of valid long options.
+##
+cli_option_add_long()
+{
+    CLI_OPTION_LONG+=("${1// /}")
+}
+
+##
+# Add an argument name and type to the list of all argument names, as well as
+# the list of all argument types.
+##
+cli_option_add_argument()
+{
+    local arg="${1// /}"
+    local type=
+    local count=$(echo "${arg}" | tr -c -d ':' | wc -c)
+    case ${count} in
+        0) type=${CLI_ARGUMENT_TYPE_NONE} ;;
+        1) type=${CLI_ARGUMENT_TYPE_REQUIRED} ;;
+        2) type=${CLI_ARGUMENT_TYPE_OPTIONAL} ;;
+        3) type=${CLI_ARGUMENT_TYPE_LIST} ;;
+        *) echo "${PROJECT}: Error adding argument '${arg}'." 1>&2; exit ;;
+    esac
+    CLI_OPTION_ARGNAME+=("${arg//:/}")
+    CLI_OPTION_ARGTYPE+=("${type}")
+}
+
+##
+# Add a description to the list of descriptions.
+##
+cli_option_add_description()
+{
+    CLI_OPTION_DESC+=("${1}")
+}
+
+
+
+
+##
+# Return the desired field from a long option that has an argument.
+# 
+# Example: '--long=argument'
+# 
+# Possible field values:
+#   1 - The option field. From the example above, returns '--long'.
+#   2 - The argument field. From the example above, returns 'argument'.
+##
+cli_option_get_field()
+{
+    local string="${1}"
+    local field="${2}"
+    case "${field}" in
+        1) echo "${string%%=*}" ;;
+        2) echo "${string##*=}" ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+##
+# Return the option field from a long option that has an argument.
+##
+cli_option_get_option_field()
+{
+    cli_option_get_field "${1}" 1
+    return $?
+}
+
+##
+# Return the argument field from a long option that has an argument.
+##
+cli_option_get_argument_field()
+{
+    cli_option_get_field "${1}" 2
+    return $?
+}
+
+##
+# Check if a provided option has an argument.
+# 
+# Used in cli_options(), checks if a long option is of the form
+# '--long=argument', as opposed to an option having no argument, like '--long'.
+##
+cli_option_has_argument()
+{
+    local string="${1}"
+    if [ "${string//=/}" != "${string}" ]
+    then
+        return 0
+    else
+        return 1
+    fi
+}
