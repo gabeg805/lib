@@ -96,20 +96,20 @@ cli_parse()
     while [ -n "${1}" ]
     do
         input="${1}"
-        index=$(cli_find_option_index "${input}")
-        if cli_parse_list_argument "${arg}" "${index}" "${type}"
+        index=$(cli_option_find_index "${input}")
+        if cli_parse_list_argument "${type}" "${index}"
         then
             arg="$(cli_add_list_argument "${arg}" "${input}")"
             shift
             if [ -z "${1}" ]
             then
-                cli_add_to_table "${opt}" "${arg}"
+                cli_input_add "${opt}" "${arg}"
             fi
             continue
         else
             if [ -n "${opt}" ]
             then
-                cli_add_to_table "${opt}" "${arg}"
+                cli_input_add "${opt}" "${arg}"
             fi
         fi
         if [ -z "${index}" ]
@@ -120,44 +120,48 @@ cli_parse()
 
         type=$(cli_get_arg_type_index ${index})
         opt="${index}"
-        if cli_is_no_argument ${type}
-        then
-            arg=true
-            cli_parse_help_opt "${input}"
-            shift
-        elif cli_is_required_argument ${type} \
-                || cli_is_optional_argument ${type}
-        then
-            if cli_is_long_opt_index "${input}" "${index}"
-            then
-                arg="${input##*=}"
-                if cli_parse_optional_long_argument "${input%%=*}" "${arg}" "${type}"
-                then
-                    arg=true
-                fi
+        case "${type}" in
+            ${CLI_ARGUMENT_TYPE_NONE})
+                arg=true
+                cli_parse_help_option "${input}"
                 shift
-            else
-                shift
-                input="${1}"
-                arg="${input}"
-                if cli_parse_optional_short_argument "${input}" "${type}"
+                ;;
+
+            ${CLI_ARGUMENT_TYPE_REQUIRED}|${CLI_ARGUMENT_TYPE_OPTIONAL})
+                if cli_is_long_opt_index "${input}" "${index}"
                 then
-                    arg=true
+                    arg="${input##*=}"
+                    if cli_parse_optional_long_argument "${input%%=*}" "${arg}" "${type}"
+                    then
+                        arg=true
+                    fi
+                    shift
                 else
                     shift
+                    input="${1}"
+                    arg="${input}"
+                    if cli_parse_optional_short_argument "${input}" "${type}"
+                    then
+                        arg=true
+                    else
+                        shift
+                    fi
                 fi
-            fi
-        elif cli_is_list_argument ${type}
-        then
-            shift
-            cli_check_first_list_argument "${1}"
-            continue
-        else
-            echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
-            exit 1
-        fi
+                ;;
 
-        cli_add_to_table "${opt}" "${arg}"
+            ${CLI_ARGUMENT_TYPE_LIST})
+                shift
+                cli_check_first_list_argument "${1}"
+                continue
+                ;;
+
+            *)
+                echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
+                exit 1
+                ;;
+        esac
+
+        cli_input_add "${opt}" "${arg}"
         opt=
         arg=
     done
@@ -166,26 +170,13 @@ cli_parse()
 }
 
 ##
-# Parse the help option.
-##
-cli_parse_help_opt()
-{
-    if [ "${1}" == "--help" ]
-    then
-        cli_usage
-        exit 0
-    fi
-}
-
-##
 # Parse a list argument type.
 ##
 cli_parse_list_argument()
 {
-    local arg="${1}"
+    local type="${1}"
     local index="${2}"
-    local type="${3}"
-    if cli_is_list_argument ${type}
+    if cli_is_list_argument "${type}"
     then
         if [ -z "${index}" ]
         then
@@ -205,7 +196,7 @@ cli_check_first_list_argument()
     local index=
     if [ -n "${input}" ]
     then
-        index="$(cli_find_option_index "${input}")"
+        index="$(cli_option_find_index "${input}")"
     fi
     if [ -z "${input}" ] || [ -n "${input}" -a -n "${index}" ]
     then
@@ -241,7 +232,7 @@ cli_parse_optional_short_argument()
 {
     local input="${1}"
     local type="${2}"
-    if [ -n "$(cli_find_option_index "${input}")" ]
+    if [ -n "$(cli_option_find_index "${input}")" ]
     then
         if cli_is_required_argument ${type}
         then
@@ -331,7 +322,7 @@ cli_test()
 ##
 # Add a key-value pair to the command line interface table.
 ##
-cli_add_to_table()
+cli_input_add()
 {
     local index="${1}"
     local value="${2}"
@@ -421,7 +412,7 @@ cli_new_usage_line()
 # Find the index of the option that corresponds to the input. The input must be
 # a short or long option.
 ##
-cli_find_option_index()
+cli_option_find_index()
 {
     local opt="${1}"
     local trunc="${1%%=*}"
@@ -456,7 +447,7 @@ cli_find_option_index()
 cli_opt_to_key()
 {
     local opt="${1}"
-    local index=$(cli_find_option_index "${opt}")
+    local index=$(cli_option_find_index "${opt}")
     local key=
     if [ -z "${index}" ]
     then
@@ -721,7 +712,7 @@ cli_is_equal_opt()
 cli_is_short_opt()
 {
     local opt="${1}"
-    local index=$(cli_find_option_index "${opt}")
+    local index=$(cli_option_find_index "${opt}")
     return $(cli_is_short_opt_index "${opt}" "${index}")
 }
 
@@ -750,7 +741,7 @@ cli_is_short_opt_index()
 cli_is_long_opt()
 {
     local opt="${1}"
-    local index=$(cli_find_option_index "${opt}")
+    local index=$(cli_option_find_index "${opt}")
     return $(cli_is_long_opt_index "${opt}" "${index}")
 }
 
@@ -794,6 +785,19 @@ cli_is_long_opt_index()
 
 
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+
+##
+# Parse the help option.
+##
+cli_parse_help_option()
+{
+    if [ "${1}" == "--help" ]
+    then
+        cli_usage
+        exit 0
+    fi
+}
 
 ##
 # Add a short option to the list of valid short options.
