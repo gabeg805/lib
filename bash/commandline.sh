@@ -51,6 +51,42 @@ CLI_ARGUMENT_TYPE_REQUIRED=1
 CLI_ARGUMENT_TYPE_OPTIONAL=2
 CLI_ARGUMENT_TYPE_LIST=3
 
+    # if cli_argument_type_is_none "${type}"
+    # then
+    #     cli_parse_help_option "${input}"
+    # elif cli_argument_type_is_required "${type}" || cli_argument_type_is_optional "${type}"
+    # then
+    #     if cli_option_is_long_compare "${input}" "${long}"
+    #     then
+    #         if cli_argument_type_is_required "${type}"
+    #         then
+    #             arg="$(cli_option_get_argument_field "${input}")"
+    #         fi
+    #     else
+    #         shift
+    #         local newinfo=($(cli_option_find_with_index "${1}"))
+    #         if [ -n "${newinfo}" ]
+    #         then
+    #             if cli_argument_type_is_optional "${type}"
+    #             then
+    #                 :
+    #             else
+    #                 # ERROR
+    #             fi
+    #         else
+    #             arg="${1}"
+    #         fi
+    #     fi
+    # elif cli_argument_type_is_list "${type}"
+    # then
+    #     shift
+    #     cli_check_first_list_argument "${1}"
+    #     continue
+    # else
+    #     echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
+    #     exit 1
+    # fi
+
 
 
 ##
@@ -73,7 +109,7 @@ cli_parse()
             exit ${EARG}
         fi
 
-        skip=$(cli_parse_argument "${info[0]}" "${info[2]}" "${@}")
+        skip=$(cli_parse_argument "${input}" "${info[0]}" "${@}")
         if [ $? -ne 0 ]
         then
             exit ${EARG}
@@ -90,63 +126,44 @@ cli_parse()
 ##
 cli_parse_argument()
 {
-    case "${type}" in
-        ${CLI_ARGUMENT_TYPE_NONE})
-            arg=true
-            cli_parse_help_option "${input}"
-            shift
-            ;;
-
-        ${CLI_ARGUMENT_TYPE_REQUIRED}|${CLI_ARGUMENT_TYPE_OPTIONAL})
-            if cli_is_long_opt_index "${input}" "${index}"
-            then
-                arg="${input##*=}"
-                if cli_parse_optional_long_argument "${input%%=*}" "${arg}" "${type}"
-                then
-                    arg=true
-                fi
-                shift
-            else
-                shift
-                input="${1}"
-                arg="${input}"
-                if cli_parse_optional_short_argument "${input}" "${type}"
-                then
-                    arg=true
-                else
-                    shift
-                fi
-            fi
-            ;;
-
-        ${CLI_ARGUMENT_TYPE_LIST})
-            shift
-            cli_check_first_list_argument "${1}"
-            continue
-            ;;
-
-        *)
-            echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
-            exit 1
-            ;;
-    esac
-}
-
-##
-# Parse a list argument type.
-##
-cli_parse_list_argument()
-{
-    local type="${1}"
+    local input="${1}"
     local index="${2}"
-    if cli_is_list_argument "${type}"
+    local info=($(cli_option_find_with_index "${index}"))
+    local short="${info[1]}"
+    local long="${info[2]}"
+    local type="${info[3]}"
+    local opt="${long}"
+    local arg=true
+    local skip=1
+    local status=0
+    shift 2
+
+    if cli_argument_type_is_none "${type}"
     then
-        if [ -z "${index}" ]
-        then
-            return 0
-        fi
+        arg="$(cli_parse_argument_none "${long}")" || exit 0
+    elif cli_argument_type_is_required "${type}"
+    then
+        arg="$(cli_parse_argument_required "${input}" "${long}" "${2}")"
+        status=$?
+    elif cli_argument_type_is_optional "${type}"
+    then
+        arg="$(cli_parse_argument_optional "${input}" "${long}" "${2}")"
+        status=$?
+    elif cli_argument_type_is_list "${type}"
+    then
+        arg="$(cli_parse_argument_list "${input}" "${long}" "${@}")"
+        status=$?
+    else
+        echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
+        exit 1
     fi
-    return 1
+
+    if [ $? -ne 0 ]
+    then
+        exit 1
+    fi
+
+    echo "${skip}"
 }
 
 ##
@@ -166,72 +183,6 @@ cli_check_first_list_argument()
         echo "${PROJECT}: List argument needs at least one argument." 1>&2
         exit 3
     fi
-}
-
-##
-# Parse an optional argument type.
-##
-cli_parse_optional_long_argument()
-{
-    local opt="${1}"
-    local arg="${2}"
-    local type="${3}"
-    if [ "${opt}" == "${arg}" ]
-    then
-        if cli_is_required_argument ${type}
-        then
-            echo "${PROJECT}: Option '${opt}' must be supplied an argument." 1>&2
-            exit 2
-        fi
-        return 0
-    fi
-    return 1
-}
-
-##
-# Parse an optional argument
-##
-cli_parse_optional_short_argument()
-{
-    local input="${1}"
-    local type="${2}"
-    if [ -n "$(cli_option_find_index "${input}")" ]
-    then
-        if cli_is_required_argument ${type}
-        then
-            echo "${PROJECT}: Option '${opt}' must be supplied an argument." 1>&2
-            exit 2
-        fi
-        return 0
-    fi
-    return 1
-}
-
-##
-# Print the usage message for the program.
-##
-cli_usage()
-{
-    local short=
-    local long=
-    local argname=
-    local desc=
-    local line=
-    local i=
-    echo "Usage: ${PROJECT} [options]"
-    echo
-    echo "Options:"
-    for i in $(cli_get_index_list)
-    do
-        short=$(cli_get_short_opt_index ${i})
-        long=$(cli_get_long_opt_index ${i})
-        argname=$(cli_get_arg_name_index ${i} | tr -d ':')
-        desc=$(cli_get_desc_index ${i})
-        line=$(cli_new_usage_line "${short}" "${long}" "${argname}")
-        echo "    ${line}"
-        echo "        ${desc}" | fmt -c -w 80
-        echo
-    done
 }
 
 ##
@@ -335,40 +286,6 @@ cli_add_list_argument()
     else
         echo "${arg}|${input}"
     fi
-}
-
-##
-# Create an option usage line
-##
-cli_new_usage_line()
-{
-    local short="${1}"
-    local long="${2}"
-    local argname="${3}"
-    local line=
-    if [ -n "${short}" ]
-    then
-        line="${short}"
-    fi
-    if [ -n "${long}" ]
-    then
-        if [ -n "${short}" ]
-        then
-            line+=", ${long}"
-        else
-            line="${long}"
-        fi
-    fi
-    if [ "${argname}" != "none" ]
-    then
-        if [ -n "${long}" ]
-        then
-            line+="=<${argname}>"
-        else
-            line+=" <${argname}>"
-        fi
-    fi
-    echo "${line}"
 }
 
 ##
@@ -567,58 +484,6 @@ cli_has_arg()
 }
 
 ##
-# Check if the argument type is no_argument.
-##
-cli_is_no_argument()
-{
-    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_NONE} ]
-    then
-        return 0
-    else
-        return 1
-    fi
-}
-
-##
-# Check if the argument type is required_argument.
-##
-cli_is_required_argument()
-{
-    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_REQUIRED} ]
-    then
-        return 0
-    else
-        return 1
-    fi
-}
-
-##
-# Check if the argument type is optional_argument.
-##
-cli_is_optional_argument()
-{
-    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_OPTIONAL} ]
-    then
-        return 0
-    else
-        return 1
-    fi
-}
-
-##
-# Check if the argument type is list_argument.
-##
-cli_is_list_argument()
-{
-    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_LIST} ]
-    then
-        return 0
-    else
-        return 1
-    fi
-}
-
-##
 # Check if the input string is equal to the option string. This function will
 # also trim the option string, in case the input is in the key format.
 ## 
@@ -746,15 +611,126 @@ cli_options()
 }
 
 ##
-# Parse the help option.
+# Parse an argument with the type NONE.
 ##
-cli_parse_help_option()
+cli_parse_argument_none()
 {
-    if [ "${1}" == "--help" ]
+    local long="${1}"
+    if [ "${long}" == "--help" ]
     then
-        cli_usage
-        exit 0
+        cli_usage 1>&2
+        return 1
     fi
+    echo "true"
+    return 0
+}
+
+##
+# Parse an argument with the type REQUIRED.
+##
+cli_parse_argument_required()
+{
+    local input="${1}"
+    local long="${2}"
+    local next="${3}"
+    local arg="${next}"
+    if cli_option_is_long_compare "${input}" "${long}"
+    then
+        arg="$(cli_option_get_argument_field "${input}")"
+    else
+        local nextinfo=($(cli_option_find_with_index "${next}"))
+        if [ -n "${nextinfo}" ]
+        then
+            echo "${PROJECT}: An argument must be given for option '${input}'." 1>&2
+            return 1
+        fi
+    fi
+    echo "${arg}"
+    return 0
+}
+
+##
+# Parse an argument with the type OPTIONAL.
+##
+cli_parse_argument_optional()
+{
+    local input="${1}"
+    local long="${2}"
+    local next="${3}"
+    local arg="${next}"
+    if cli_option_is_long_compare "${input}" "${long}"
+    then
+        arg="$(cli_option_get_argument_field "${input}")"
+    else
+        local nextinfo=($(cli_option_find_with_index "${next}"))
+        if [ -n "${nextinfo}" ]
+        then
+            arg="true"
+        fi
+    fi
+    echo "${arg}"
+    return 0
+}
+
+##
+# Print the usage message for the program.
+##
+cli_usage()
+{
+    local short=
+    local long=
+    local argname=
+    local desc=
+    local line=
+    local i=
+    echo "Usage: ${PROJECT} [options]"
+    echo
+    echo "Options:"
+    for i in $(cli_get_index_list)
+    do
+        short="$(cli_option_get_short "${i}")"
+        long="$(cli_option_get_long "${i}")"
+        argname="$(cli_option_get_argname "${i}")"
+        desc="$(cli_option_get_desc "${i}")"
+        line=$(cli_new_usage_line "${short}" "${long}" "${argname}")
+        echo "    ${line}"
+        echo "        ${desc}" | fmt -c -w 80
+        echo
+    done
+}
+
+##
+# Create a usage line for the given option.
+##
+cli_new_usage_line()
+{
+    local short="${1}"
+    local long="${2}"
+    local argname="${3}"
+    local line=
+    if [ -n "${short}" ]
+    then
+        line="${short}"
+    fi
+    if [ -n "${long}" ]
+    then
+        if [ -n "${short}" ]
+        then
+            line+=", ${long}"
+        else
+            line="${long}"
+        fi
+    fi
+    if [ "${argname}" != "none" ]
+    then
+        if [ -n "${long}" ]
+        then
+            line+="=<${argname}>"
+        else
+            line+=" <${argname}>"
+        fi
+    fi
+    echo "${line}"
 }
 
 ##
@@ -810,6 +786,18 @@ cli_option_find()
 {
     local opt="${1}"
     local index="$(cli_option_find_index "${opt}")"
+    cli_option_find_with_index "${index}"
+    return $?
+}
+
+##
+# Find the option information using the index.
+# 
+# The input must be an index.
+##
+cli_option_find_with_index()
+{
+    local index="${1}"
     if [ -z "${index}" ]
     then
         return 1
@@ -821,34 +809,6 @@ cli_option_find()
     local info=("${index}" "${short}" "${long}" "${argtype}" "${argname}")
     echo "${info[@]}"
     return 0
-}
-
-##
-# Find the index of the option that corresponds to the input.
-# 
-# The input must be a short or long option.
-##
-cli_option_find_index()
-{
-    local opt="${1}"
-    local i=
-    if [ -z "${opt}" ]
-    then
-        return 1
-    fi
-
-    for i in $(cli_get_index_list)
-    do
-        local short=$(cli_get_short_opt_index ${i})
-        local long=$(cli_get_long_opt_index ${i})
-        if cli_is_equal_opt "${opt}" "${short}" \
-                || cli_is_equal_opt "${opt}" "${long}"
-        then
-            echo ${i}
-            return 0
-        fi
-    done
-    return 1
 }
 
 ##
@@ -914,10 +874,22 @@ cli_option_get_field()
 {
     local string="${1}"
     local field="${2}"
+    local 
     case "${field}" in
-        1) echo "${string%%=*}" ;;
-        2) echo "${string##*=}" ;;
-        *) return 1 ;;
+        1)
+            echo "${string%%=*}"
+            ;;
+
+        2) if [ "${string//=/}" != "${string}" ]
+           then
+               echo "${string##*=}"
+           else
+               echo "true"
+           fi
+           ;;
+        *)
+            return 1
+            ;;
     esac
     return 0
 }
@@ -950,6 +922,89 @@ cli_option_has_argument()
 {
     local string="${1}"
     if [ "${string//=/}" != "${string}" ]
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+##
+# Check if the argument type is NONE type.
+##
+cli_argument_type_is_none()
+{
+    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_NONE} ]
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+##
+# Check if the argument type is REQUIRED type.
+##
+cli_argument_type_is_required()
+{
+    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_REQUIRED} ]
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+##
+# Check if the argument type is OPTIONAL type.
+##
+cli_argument_type_is_optional()
+{
+    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_OPTIONAL} ]
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+##
+# Check if the argument type is LIST type.
+##
+cli_argument_type_is_list()
+{
+    if [ "${1}" -eq ${CLI_ARGUMENT_TYPE_LIST} ]
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+##
+# Compare the input to the actual short option.
+##
+cli_option_is_short_compare()
+{
+    local input="${1}"
+    local short="${2}"
+    if [ "${input}" == "${short}" ]
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+##
+# Compare the input to the actual long option.
+##
+cli_option_is_long_compare()
+{
+    local input="${1}"
+    local long="${2}"
+    local field="$(cli_option_get_option_field "${input}")"
+    if [ "${input}" == "${long}" -o "${field}" == "${long}" ]
     then
         return 0
     else
