@@ -19,11 +19,8 @@
 # 
 # Private functions:
 # 
+#     * cli_option_add
 #     * cli_input_add
-#     * cli_option_add_short
-#     * cli_option_add_long
-#     * cli_option_add_argument
-#     * cli_option_add_description
 #     * cli_parse_argument
 #     * cli_parse_argument_none
 #     * cli_parse_argument_required
@@ -32,25 +29,19 @@
 #     * cli_parse_argument_shift
 #     * cli_usage_line
 #     * cli_option_find
-#     * cli_option_find_with_index
-#     * cli_option_index_list
-#     * cli_input_index_list
-#     * cli_option_get_short
-#     * cli_option_get_long
-#     * cli_option_get_argname
-#     * cli_option_get_argtype
-#     * cli_option_get_desc
-#     * cli_input_get_option
+#     * cli_option_find_full
+#     * cli_option_list
+#     * cli_input_list
+#     * cli_option_get_key
 #     * cli_input_get_argument
+#     * cli_input_get_argument_guess
 #     * cli_option_get_field
 #     * cli_option_get_option_field
 #     * cli_option_get_argument_field
 #     * cli_option_get_length
 #     * cli_input_get_length
 #     * cli_option_has_argument
-#     * cli_option_is_equal
-#     * cli_option_is_short_compare
-#     * cli_option_is_long_compare
+#     * cli_option_is_long
 #     * cli_argument_type_is_none
 #     * cli_argument_type_is_required
 #     * cli_argument_type_is_optional
@@ -68,7 +59,8 @@
 #     * EXIT_INPUT_LENGTH_ZERO     = 8
 #     * EXIT_INVALID_FIELD         = 9
 #     * EXIT_INVALID_GET_OPTION    = 10
-#     * EXIT_GET_OPTION_NOT_FOUND  = 11
+#     * EXIT_INVALID_GET_KEY       = 11
+#     * EXIT_GET_OPTION_NOT_FOUND  = 12
 # 
 # ------------------------------------------------------------------------------
 
@@ -82,11 +74,8 @@ PROJECT=
 ##
 # Command line interface option information.
 ##
-CLI_OPTION_SHORT=()
-CLI_OPTION_LONG=()
-CLI_OPTION_ARGNAME=()
-CLI_OPTION_ARGTYPE=()
-CLI_OPTION_DESC=()
+declare -A CLI_OPTION
+declare -A CLI_OPTION_MAP
 
 ##
 # Command line interface options and arguments that a user has input into the
@@ -116,7 +105,8 @@ EXIT_OPTION_LENGTH_ZERO=7
 EXIT_INPUT_LENGTH_ZERO=8
 EXIT_INVALID_FIELD=9
 EXIT_INVALID_GET_OPTION=10
-EXIT_GET_OPTION_NOT_FOUND=11
+EXIT_INVALID_GET_KEY=11
+EXIT_GET_OPTION_NOT_FOUND=12
 
 ##
 # Define all the command line options and how they should be used.
@@ -134,16 +124,23 @@ cli_options()
         local long="${options[1]}"
         local description="${options[2]}"
         local argument=
+        local key="${long}"
+        local other="${short}"
 
-        cli_option_add_short "${short}"
-        if cli_option_has_argument "${long}"
+        if [ -z "${long}" ]
         then
-            argument="$(cli_option_get_argument_field "${long}")"
-            long="$(cli_option_get_option_field "${long}")"
+            key="${short}"
+            other="${long}"
+        else
+            if cli_option_has_argument "${long}"
+            then
+                argument="$(cli_option_get_argument_field "${long}")"
+                long="$(cli_option_get_option_field "${long}")"
+                key="${long}"
+            fi
         fi
-        cli_option_add_argument "${argument}"
-        cli_option_add_long "${long}"
-        cli_option_add_description "${description}"
+
+        cli_option_add "${key}" "${other}" "${argument}" "${description}"
     done
     return 0
 }
@@ -167,16 +164,16 @@ cli_parse()
         # Option information
         local opt="${1}"
         local info=($(cli_option_find "${opt}"))
-        if [ -z "${info}" ]
+        if [ $? -ne 0 ]
         then
             echo "${PROJECT}: Invalid option '${opt}'." 1>&2
             exit ${EXIT_INVALID_OPTION}
         fi
 
         # Parse the argument
-        local index="${info[0]}"
-        local long="${info[2]}"
-        local arg=$(cli_parse_argument "${index}" "${@}")
+        local key="${info[0]}"
+        local type="${info[2]}"
+        local arg=$(cli_parse_argument "${key}" "${type}" "${@}")
         local status=$?
         if [ ${status} -ne 0 ]
         then
@@ -188,9 +185,9 @@ cli_parse()
         fi
 
         # Add the argument(s) to the list of inputs
-        cli_input_add "${long}" "${arg}"
+        cli_input_add "${key}" "${arg}"
 
-        local skip=$(cli_parse_argument_shift "${opt}" "${arg}" "${long}")
+        local skip=$(cli_parse_argument_shift "${opt}" "${arg}")
         shift ${skip}
         continue
     done
@@ -237,17 +234,8 @@ cli_get()
         echo "${PROJECT}: Invalid option to retrieve. Do not use dashes when specifying the option." 1>&2
         return ${EXIT_INVALID_GET_OPTION}
     fi
-    local arg="$(cli_input_get_argument "--${opt}")"
-    if [ -z "${arg}" ]
-    then
-        arg="$(cli_input_get_argument "-${opt}")"
-        if [ -z "${arg}" ]
-        then
-            return ${EXIT_GET_OPTION_NOT_FOUND}
-        fi
-    fi
-    echo "${arg}"
-    return 0
+    cli_input_get_argument_guess "${opt}"
+    return $?
 }
 
 ##
@@ -255,22 +243,20 @@ cli_get()
 ##
 cli_usage()
 {
-    local short=
-    local long=
-    local argname=
-    local desc=
-    local line=
-    local i=
     echo "Usage: ${PROJECT} [options]"
     echo
     echo "Options:"
-    for i in $(cli_option_index_list)
+    local opt=
+    for opt in $(cli_option_list | sort)
     do
-        short="$(cli_option_get_short "${i}")"
-        long="$(cli_option_get_long "${i}")"
-        argname="$(cli_option_get_argname "${i}")"
-        desc="$(cli_option_get_desc "${i}")"
-        line=$(cli_usage_line "${short}" "${long}" "${argname}")
+        local IFS=$'|'
+        local full=($(cli_option_find_full "${opt}"))
+        local key="${full[0]}"
+        local other="${full[1]}"
+        local desc="${full[3]}"
+        local argname="${full[4]}"
+
+        line=$(cli_usage_line "${key}" "${other}" "${argname}")
         echo "    ${line}"
         echo "        ${desc}" | fmt -c -w 80
         echo
@@ -278,37 +264,25 @@ cli_usage()
 }
 
 ##
-# Add the input option and correspondding argument to the list of inputs the
-# user has entered on the command line.
+# Add an option to the list of valid options.
+# 
+# This will add the key option, the other option, the argument and its type, and
+# the description.
+# 
+# Key         - Typically the long option, but if there is no long option, this
+#               will be the short option.
+# Other       - Typically the short option, but will be empty if the short
+#               option is the Key.
+# Argument    - This will be the argument name and its type, denoted by the
+#               number of ':' after it.
+# Description - Usage description for this option.
 ##
-cli_input_add()
+cli_option_add()
 {
-    CLI_INPUT["${1}"]="${2}"
-}
-
-##
-# Add a short option to the list of valid short options.
-##
-cli_option_add_short()
-{
-    CLI_OPTION_SHORT+=("${1// /}")
-}
-
-##
-# Add a long option to the list of valid long options.
-##
-cli_option_add_long()
-{
-    CLI_OPTION_LONG+=("${1// /}")
-}
-
-##
-# Add an argument name and type to the list of argument names, as well as to the
-# list of argument types.
-##
-cli_option_add_argument()
-{
-    local arg="${1// /}"
+    local key="${1// /}"
+    local other="${2// /}"
+    local arg="${3// /}"
+    local desc="${4}"
     local type=
     local count=$(echo "${arg}" | tr -c -d ':' | wc -c)
     case ${count} in
@@ -320,16 +294,20 @@ cli_option_add_argument()
            exit ${EXIT_INVALID_ARGUMENT_TYPE}
            ;;
     esac
-    CLI_OPTION_ARGNAME+=("${arg//:/}")
-    CLI_OPTION_ARGTYPE+=("${type}")
+    if [ -n "${other}" ]
+    then
+        CLI_OPTION_MAP["${other}"]="${key}"
+    fi
+    CLI_OPTION["${key}"]="${other}|${type}|${desc}|${arg//:/}"
 }
 
 ##
-# Add a description to the list of descriptions.
+# Add the input option and corresponding argument to the list of inputs the
+# user has entered on the command line.
 ##
-cli_option_add_description()
+cli_input_add()
 {
-    CLI_OPTION_DESC+=("${1}")
+    CLI_INPUT["${1}"]="${2}"
 }
 
 ##
@@ -337,31 +315,27 @@ cli_option_add_description()
 ##
 cli_parse_argument()
 {
-    local index="${1}"
-    local info=($(cli_option_find_with_index "${index}"))
-    local index="${info[0]}"
-    local short="${info[1]}"
-    local long="${info[2]}"
-    local type="${info[3]}"
-    local opt="${2}"
+    local key="${1}"
+    local type="${2}"
+    local opt="${3}"
     local arg=true
     local status=0
-    shift 2
+    shift 3
 
     if cli_argument_type_is_none "${type}"
     then
-        arg="$(cli_parse_argument_none "${long}")" || return ${EXIT_HELP}
+        arg="$(cli_parse_argument_none "${key}")" || return ${EXIT_HELP}
     elif cli_argument_type_is_required "${type}"
     then
-        arg="$(cli_parse_argument_required "${opt}" "${long}" "${1}")"
+        arg="$(cli_parse_argument_required "${opt}" "${1}")"
     elif cli_argument_type_is_optional "${type}"
     then
-        arg="$(cli_parse_argument_optional "${opt}" "${long}" "${1}")"
+        arg="$(cli_parse_argument_optional "${opt}" "${1}")"
     elif cli_argument_type_is_list "${type}"
     then
-        arg="$(cli_parse_argument_list "${opt}" "${long}" "${@}")"
+        arg="$(cli_parse_argument_list "${opt}" "${@}")"
     else
-        echo "${PROJECT}: Unknown argument type for option ${opt}, type ${type}." 1>&2
+        echo "${PROJECT}: Unknown argument type for option '${opt}', type '${type}'." 1>&2
         return 1
     fi
 
@@ -382,8 +356,8 @@ cli_parse_argument()
 ##
 cli_parse_argument_none()
 {
-    local long="${1}"
-    if [ "${long}" == "--help" ]
+    local key="${1}"
+    if [ "${key}" == "--help" ]
     then
         cli_usage 1>&2
         return 1
@@ -399,18 +373,17 @@ cli_parse_argument_none()
 ##
 cli_parse_argument_required()
 {
-    local input="${1}"
-    local long="${2}"
-    local next="${3}"
+    local opt="${1}"
+    local next="${2}"
     local arg="${next}"
-    if cli_option_is_long_compare "${input}" "${long}"
+    if cli_option_is_long "${opt}"
     then
-        arg="$(cli_option_get_argument_field "${input}")"
+        arg="$(cli_option_get_argument_field "${opt}")"
     else
         local nextinfo=($(cli_option_find "${next}"))
-        if [ -n "${nextinfo}" ]
+        if [ $? -eq 0 ]
         then
-            echo "${PROJECT}: An argument must be given for option '${input}'." 1>&2
+            echo "${PROJECT}: An argument must be given for option '${opt}'." 1>&2
             return ${EXIT_INVALID_ARGUMENT}
         fi
     fi
@@ -426,16 +399,15 @@ cli_parse_argument_required()
 ##
 cli_parse_argument_optional()
 {
-    local input="${1}"
-    local long="${2}"
-    local next="${3}"
+    local opt="${1}"
+    local next="${2}"
     local arg="${next}"
-    if cli_option_is_long_compare "${input}" "${long}"
+    if cli_option_is_long "${opt}"
     then
-        arg="$(cli_option_get_argument_field "${input}")"
+        arg="$(cli_option_get_argument_field "${opt}")"
     else
         local nextinfo=($(cli_option_find "${next}"))
-        if [ -n "${nextinfo}" ]
+        if [ $? -eq 0 ]
         then
             arg="true"
         fi
@@ -452,26 +424,25 @@ cli_parse_argument_optional()
 ##
 cli_parse_argument_list()
 {
-    local input="${1}"
-    local long="${2}"
-    shift 2
+    local opt="${1}"
+    shift
     local arg=
 
-    if cli_option_is_long_compare "${input}" "${long}"
+    if cli_option_is_long "${opt}"
     then
         # Make sure an argument was specified
-        arg="$(cli_option_get_argument_field "${input}")"
+        arg="$(cli_option_get_argument_field "${opt}")"
         if [ "${arg}" == "true" ]
         then
-            echo "${PROJECT}: An argument must be given for option '${input}'." 1>&2
+            echo "${PROJECT}: An argument must be given for option '${opt}'." 1>&2
             return ${EXIT_INVALID_ARGUMENT}
         fi
     else
         # Make sure next item is not an option
         local nextinfo=($(cli_option_find "${1}"))
-        if [ -n "${nextinfo}" ]
+        if [ $? -ne 0 ]
         then
-            echo "${PROJECT}: An argument must be given for option '${input}'." 1>&2
+            echo "${PROJECT}: An argument must be given for option '${opt}'." 1>&2
             return ${EXIT_INVALID_ARGUMENT}
         fi
 
@@ -498,9 +469,8 @@ cli_parse_argument_shift()
 {
     local opt="${1}"
     local arg="${2}"
-    local long="${3}"
     local skip=
-    if [ "${arg}" == "true" ] || cli_option_is_long_compare "${opt}" "${long}"
+    if [ "${arg}" == "true" ] || cli_option_is_long "${opt}"
     then
         skip=1
     else
@@ -514,26 +484,26 @@ cli_parse_argument_shift()
 ##
 cli_usage_line()
 {
-    local short="${1}"
-    local long="${2}"
+    local key="${1}"
+    local other="${2}"
     local argname="${3}"
     local line=
-    if [ -n "${short}" ]
+    if [ -n "${other}" ]
     then
-        line="${short}"
+        line="${other}"
     fi
-    if [ -n "${long}" ]
+    if [ -n "${key}" ]
     then
-        if [ -n "${short}" ]
+        if [ -n "${other}" ]
         then
-            line+=", ${long}"
+            line+=", ${key}"
         else
-            line="${long}"
+            line="${key}"
         fi
     fi
-    if [ "${argname}" != "none" ]
+    if [ -n "${argname}" ]
     then
-        if [ -n "${long}" ]
+        if [ -n "${key}" ]
         then
             line+="=<${argname}>"
         else
@@ -543,71 +513,60 @@ cli_usage_line()
     echo "${line}"
 }
 
-
 ##
 # Find the option information for the given option.
 # 
-# The input must be a short or long option.
+# The input must be a short or long option key.
 ##
 cli_option_find()
 {
     local opt="${1}"
-    local index=-1
-    local i=0
-    for i in $(cli_option_index_list)
-    do
-        local short=$(cli_option_get_short ${i})
-        local long=$(cli_option_get_long ${i})
-        if cli_option_is_equal "${opt}" "${short}" \
-                || cli_option_is_equal "${opt}" "${long}"
-        then
-            index=${i}
-            break
-        fi
-    done
-    if [ ${index} -lt 0 ]
+    local key="$(cli_option_get_key "${opt}")"
+    local status=$?
+    if [ ${status} -ne 0 ]
     then
-        return ${EXIT_OPTION_NOT_FOUND}
+        return ${status}
     fi
-    cli_option_find_with_index "${index}"
-    return $?
-}
-
-##
-# Find the option information using the index.
-# 
-# The input must be an index.
-##
-cli_option_find_with_index()
-{
-    local index="${1}"
-    if [ -z "${index}" ]
-    then
-        return ${EXIT_INDEX_NOT_FOUND}
-    fi
-    local short="$(cli_option_get_short "${index}")"
-    local long="$(cli_option_get_long "${index}")"
-    local argtype="$(cli_option_get_argtype "${index}")"
-    local argname="$(cli_option_get_argname "${index}")"
-    local info=("${index}" "${short}" "${long}" "${argtype}" "${argname}")
-    echo "${info[@]}"
+    local IFS=$'|'
+    local info=(${CLI_OPTION["${key}"]})
+    echo "${key} ${info[@]:0:3}"
     return 0
 }
 
 ##
-# Return a list of indicies used to loop over option information elements (short
-# option, long option, argument names, etc.).
+# Find the full option information (contains the description) for the given
+# option.
 # 
-# This list begins at 0 and ends at the number of options, subtracted by 1.
+# The input must be a short or long option.  This is to be used when printing
+# program usage because normally, the description is not needed.
 ##
-cli_option_index_list()
+cli_option_find_full()
+{
+    local opt="${1}"
+    local key="$(cli_option_get_key "${opt}")"
+    local status=$?
+    if [ ${status} -ne 0 ]
+    then
+        return ${status}
+    fi
+    echo "${key}|${CLI_OPTION["${key}"]}"
+    return 0
+}
+
+##
+# Return a list of all options.
+# 
+# What is returned are the option keys. If there is a long option, this is the
+# key, but if there is no long option, then the short option is the key.
+##
+cli_option_list()
 {
     local n=$(cli_option_get_length)
     if [ ${n} -eq 0 ]
     then
         return ${EXIT_OPTION_LENGTH_ZERO}
     else
-        seq 0 $[ ${n} - 1 ]
+        echo "${!CLI_OPTION[@]}"
     fi
     return 0
 }
@@ -628,73 +587,64 @@ cli_input_list()
 }
 
 ##
-# Return the short option at the given index.
-# 
-# To-do: Add error checks for index number.
+# Return the option key that has an element in the associative array.
 ##
-cli_option_get_short()
+cli_option_get_key()
 {
-    echo "${CLI_OPTION_SHORT[${1}]}"
+    if [ -z "${1}" ]
+    then
+        return ${EXIT_INVALID_GET_KEY}
+    fi
+    local key="$(cli_option_get_option_field "${1}")"
+    local element="${CLI_OPTION["${key}"]}"
+    if [ -z "${element}" ]
+    then
+        key="${CLI_OPTION_MAP["${key}"]}"
+        element=(${CLI_OPTION["${key}"]})
+    fi
+    if [ -z "${element}" ]
+    then
+        return ${EXIT_OPTION_NOT_FOUND}
+    fi
+    echo "${key}"
 }
 
 ##
-# Return the long option at the given index.
-# 
-# To-do: Add error checks for index number.
-##
-cli_option_get_long()
-{
-    echo "${CLI_OPTION_LONG[${1}]}"
-}
-
-##
-# Return the argument name at the given index.
-# 
-# To-do: Add error checks for index number.
-##
-cli_option_get_argname()
-{
-    echo "${CLI_OPTION_ARGNAME[${1}]}"
-}
-
-##
-# Return the argument type at the given index.
-# 
-# To-do: Add error checks for index number.
-##
-cli_option_get_argtype()
-{
-    echo "${CLI_OPTION_ARGTYPE[${1}]}"
-}
-
-##
-# Return the description at the given index.
-# 
-# To-do: Add error checks for index number.
-##
-cli_option_get_desc()
-{
-    echo "${CLI_OPTION_DESC[${1}]}"
-}
-
-##
-# Return the input option at the given index.
-# 
-# To-do: Add error checks for index number.
-##
-cli_input_get_option()
-{
-    echo "${CLI_INPUT_OPTION[${1}]}"
-}
-
-##
-# Return the input argument value at the given index.
-# 
-# To-do: Add error checks for index number.
+# Return the input argument for the given option.
 ##
 cli_input_get_argument()
 {
-    echo "${CLI_INPUT[${1}]}"
+    local arg="${CLI_INPUT[${1}]}"
+    if [ -n "${arg}" ]
+    then
+        echo "${arg}"
+        return 0
+    else
+        return ${EXIT_GET_OPTION_NOT_FOUND}
+    fi
+}
+
+##
+# Return the input argument for the given option, but guess as to what the
+# option key is.
+# 
+# The guess work happens by prepending either '--' or '-' to the option.
+##
+cli_input_get_argument_guess()
+{
+    local arg="$(cli_input_get_argument "--${1}")"
+    local status=$?
+    if [ ${status} -ne 0 ]
+    then
+        arg="$(cli_input_get_argument "-${1}")"
+        status=$?
+        if [ ${status} -ne 0 ]
+        then
+            return ${status}
+        fi
+    fi
+    echo "${arg}"
+    return 0
 }
 
 ##
@@ -753,7 +703,7 @@ cli_option_get_argument_field()
 ##
 cli_option_get_length()
 {
-    echo ${#CLI_OPTION_DESC[@]}
+    echo ${#CLI_OPTION[@]}
 }
 
 ##
@@ -782,49 +732,12 @@ cli_option_has_argument()
 }
 
 ##
-# Check if the input string is equal to the option string.
-## 
-cli_option_is_equal()
+# Check if the input option is a long option.
+##
+cli_option_is_long()
 {
-    local input="${1}"
-    local opt="${2}"
-    local field="$(cli_option_get_option_field "${input}")"
-    if [ "${input}" == "${opt}" -o "${field}" == "${opt}" ]
-    then
-        return 0
-    else
-        return 1
-    fi
-}
-
-##
-# Compare the input to the actual short option.
-# 
-# The second input to this function should be the real short option.
-##
-cli_option_is_short_compare()
-{
-    local input="${1}"
-    local short="${2}"
-    if [ "${input}" == "${short}" ]
-    then
-        return 0
-    else
-        return 1
-    fi
-}
-
-##
-# Compare the input to the actual long option.
-# 
-# The second input to this function should be the real long option.
-##
-cli_option_is_long_compare()
-{
-    local input="${1}"
-    local long="${2}"
-    local field="$(cli_option_get_option_field "${input}")"
-    if [ "${input}" == "${long}" -o "${field}" == "${long}" ]
+    local opt="${1}"
+    if [ "${opt:0:2}" == "--" ]
     then
         return 0
     else
