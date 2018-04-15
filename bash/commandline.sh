@@ -92,8 +92,7 @@ CLI_OPTION_DESC=()
 # Command line interface options and arguments that a user has input into the
 # current running program.
 ##
-CLI_INPUT_OPTION=()
-CLI_INPUT_ARGUMENT=()
+declare -A CLI_INPUT
 
 ##
 # Command line interface argument types.
@@ -207,21 +206,20 @@ cli_test()
     local key=
     local val=
     local length=0
-    local i=
-    for i in $(cli_input_index_list)
+    local opt=
+    local arg=
+    for opt in $(cli_input_list)
     do
-        key=$(cli_input_get_option ${i})
-        if [ ${#key} -gt ${length} ]
+        if [ ${#opt} -gt ${length} ]
         then
             length=${#key}
         fi
     done
 
-    for i in $(cli_input_index_list)
+    for opt in $(cli_input_list)
     do
-        key=$(cli_input_get_option ${i})
-        val=$(cli_input_get_argument ${i})
-        printf "Key: %${length}s | Value: %s\n" "${key}" "${val}"
+        arg="$(cli_input_get_argument "${opt}")"
+        printf "Key: %${length}s | Value: %s\n" "${opt}" "${arg}"
     done
 }
 
@@ -239,34 +237,17 @@ cli_get()
         echo "${PROJECT}: Invalid option to retrieve. Do not use dashes when specifying the option." 1>&2
         return ${EXIT_INVALID_GET_OPTION}
     fi
-
-    # Determine option information and what to compare the input option to
-    local info=($(cli_option_find "--${opt}"))
-    if [ -z "${info}" ]
+    local arg="$(cli_input_get_argument "--${opt}")"
+    if [ -z "${arg}" ]
     then
-        info=($(cli_option_find "-${opt}"))
-        if [ -z "${info}" ]
+        arg="$(cli_input_get_argument "-${opt}")"
+        if [ -z "${arg}" ]
         then
-            echo "${PROJECT}: Unable to find a valid option for '${opt}'." 1>&2
-            return ${EXIT_INVALID_OPTION}
+            return ${EXIT_GET_OPTION_NOT_FOUND}
         fi
     fi
-
-    # Find
-    local input=
-    local short="${info[1]}"
-    local long="${info[2]}"
-    local i=
-    for i in $(cli_input_index_list)
-    do
-        input="$(cli_input_get_option "${i}")"
-        if [ "${input}" == "${short}" -o "${input}" == "${long}" ]
-        then
-            cli_input_get_argument "${i}"
-            return 0
-        fi
-    done
-    return ${EXIT_GET_OPTION_NOT_FOUND}
+    echo "${arg}"
+    return 0
 }
 
 ##
@@ -302,8 +283,7 @@ cli_usage()
 ##
 cli_input_add()
 {
-    CLI_INPUT_OPTION+=("${1}")
-    CLI_INPUT_ARGUMENT+=("${2}")
+    CLI_INPUT["${1}"]="${2}"
 }
 
 ##
@@ -633,19 +613,16 @@ cli_option_index_list()
 }
 
 ##
-# Return a list of indicies used to loop over all input elements (options and
-# arguments).
-# 
-# This list begins at 0 and ends at the number of input options, subtracted by 1.
+# Return a list of all the input options.
 ##
-cli_input_index_list()
+cli_input_list()
 {
     local n=$(cli_input_get_length)
     if [ ${n} -eq 0 ]
     then
         return ${EXIT_INPUT_LENGTH_ZERO}
     else
-        seq 0 $[ ${n} - 1 ]
+        echo "${!CLI_INPUT[@]}"
     fi
     return 0
 }
@@ -717,7 +694,7 @@ cli_input_get_option()
 ##
 cli_input_get_argument()
 {
-    echo "${CLI_INPUT_ARGUMENT[${1}]}"
+    echo "${CLI_INPUT[${1}]}"
 }
 
 ##
@@ -784,7 +761,7 @@ cli_option_get_length()
 ##
 cli_input_get_length()
 {
-    echo ${#CLI_INPUT_OPTION[@]}
+    echo ${#CLI_INPUT[@]}
 }
 
 ##
